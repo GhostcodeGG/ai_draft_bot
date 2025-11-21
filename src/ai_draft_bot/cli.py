@@ -21,7 +21,9 @@ def _load_metadata(path: Path) -> dict[str, CardMetadata]:
 
 @app.command()
 def simulate(
-    model_path: Path = typer.Option(..., help="Path to a trained model artifact produced by train.py"),
+    model_path: Path = typer.Option(
+        ..., help="Path to a trained model artifact"
+    ),
     metadata_path: Path = typer.Option(..., help="Path to a card metadata CSV export"),
     pack: List[str] = typer.Option(..., help="Comma-separated card names in the pack"),
 ) -> None:

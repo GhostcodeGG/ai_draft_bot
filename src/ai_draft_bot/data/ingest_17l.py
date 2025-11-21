@@ -7,23 +7,37 @@ return structured, typed objects.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, List, Mapping, MutableMapping, Sequence
 
-import json
 import pandas as pd
 
 
 @dataclass
 class CardMetadata:
-    """Basic card attributes used for downstream feature extraction."""
+    """Card attributes including win rate statistics from 17Lands.
+
+    Win rate fields:
+        gih_wr: Games in Hand Win Rate (win% when card is in hand)
+        oh_wr: Opening Hand Win Rate (win% when card is in opening hand)
+        gd_wr: Game Draw Win Rate (win% when card is drawn during game)
+        iwd: Improvement When Drawn (percentage point improvement)
+        alsa: Average Last Seen At (average pick number when card wheels)
+    """
 
     name: str
     color: str
     rarity: str
     type_line: str
     mana_value: float
+    # Win rate statistics (optional - may not be available for all cards)
+    gih_wr: float | None = None
+    oh_wr: float | None = None
+    gd_wr: float | None = None
+    iwd: float | None = None
+    alsa: float | None = None
 
 
 @dataclass
@@ -55,7 +69,14 @@ def parse_card_metadata(path: Path | str) -> Mapping[str, CardMetadata]:
     """Parse a 17L card metadata CSV file keyed by card name.
 
     The metadata export schema is relatively stable: we only rely on fields that are
-    consistent across sets.
+    consistent across sets. Win rate columns are optional and will be populated if available.
+
+    Optional win rate columns (if present in CSV):
+        - # GIH WR or gih_wr
+        - # OH WR or oh_wr
+        - # GD WR or gd_wr
+        - IWD or iwd
+        - ALSA or alsa
     """
 
     frame = pd.read_csv(path)
@@ -64,14 +85,43 @@ def parse_card_metadata(path: Path | str) -> Mapping[str, CardMetadata]:
     if missing:
         raise ValueError(f"Card metadata missing required columns: {sorted(missing)}")
 
+    # Map possible column name variations to our standard names
+    winrate_column_map = {
+        "# GIH WR": "gih_wr",
+        "gih_wr": "gih_wr",
+        "# OH WR": "oh_wr",
+        "oh_wr": "oh_wr",
+        "# GD WR": "gd_wr",
+        "gd_wr": "gd_wr",
+        "IWD": "iwd",
+        "iwd": "iwd",
+        "ALSA": "alsa",
+        "alsa": "alsa",
+    }
+
+    # Detect which win rate columns are available
+    available_wr_cols = {
+        std_name: col_name
+        for col_name, std_name in winrate_column_map.items()
+        if col_name in frame.columns
+    }
+
     metadata: MutableMapping[str, CardMetadata] = {}
     for row in frame.to_dict(orient="records"):
+        # Extract win rate data if available
+        wr_kwargs = {}
+        for std_name, col_name in available_wr_cols.items():
+            value = row.get(col_name)
+            if pd.notna(value):
+                wr_kwargs[std_name] = float(value)
+
         metadata[row["name"]] = CardMetadata(
             name=row["name"],
             color=row["color"],
             rarity=row["rarity"],
             type_line=row["type_line"],
             mana_value=float(row["mana_value"]),
+            **wr_kwargs,
         )
     return metadata
 

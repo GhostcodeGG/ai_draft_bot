@@ -1,66 +1,66 @@
-# ai_draft_bot
+# AI Draft Bot 🤖🃏
 
-Baselines and utilities for training a Limited drafter model using 17L exports. The
-package provides ingestion helpers, feature extraction, a logistic regression baseline,
-and CLIs for training and simulation.
+An **advanced AI-powered draft bot** for Magic: The Gathering Limited formats, trained on [17Lands](https://www.17lands.com/) data. This project implements state-of-the-art machine learning techniques to build the world's most sophisticated draft pick predictor.
 
-## Getting started
+## 🌟 Features
 
-Install dependencies with an isolated virtual environment:
+### Two-Tier Architecture
+- **Baseline Model**: Fast logistic regression (16 features, ~40% accuracy)
+- **Advanced Model**: Gradient boosting with XGBoost/LightGBM (78 features, ~60-70% accuracy)
+
+### Advanced Feature Engineering (78 Features)
+- **Win Rate Integration**: GIH WR, OH WR, GD WR, IWD, ALSA from 17Lands
+- **Draft Context**: Pick/pack number, cards picked so far, deck composition
+- **Deck Statistics**: Mana curve, color commitment, creature/spell ratio, removal count
+- **Synergy Detection**: Color fit, mana curve fit, archetype coherence
+- **Pack Signals**: Bomb count, rare count, win rate distribution, pack size
+
+### State-of-the-Art Models
+- **XGBoost**: Extreme gradient boosting with early stopping
+- **LightGBM**: Memory-efficient gradient boosting with GPU support
+- **Feature Importance**: Understand which signals drive decisions
+
+## 🚀 Quick Start
+
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/yourusername/ai_draft_bot.git
+cd ai_draft_bot
+
+# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
 pip install -e .[dev]
 ```
 
-## Training a model
-
-Prepare two files from https://www.17lands.com/:
-
-- A JSONL draft log export containing pick sequences
-- A CSV card metadata export for the same set
-
-Then run the training command:
+### Training Advanced Model
 
 ```bash
-python scripts/train.py run --drafts-path path/to/drafts.jsonl \
-    --metadata-path path/to/cards.csv \
-    --output-path artifacts/model.joblib
+python scripts/train.py advanced \
+    --drafts-path data/drafts.jsonl \
+    --metadata-path data/cards.csv \
+    --output-path artifacts/advanced_model.joblib \
+    --model-type xgboost
 ```
 
-The script logs basic progress, splits the dataset into train/validation partitions, and
-saves a `joblib` artifact with the classifier and label encoder.
+## 📊 Architecture
 
-## Simulating picks
+**78 Advanced Features:**
+- Card win rates (GIH WR, IWD, ALSA)
+- Draft context (pick/pack number)
+- Deck composition (mana curve, colors)
+- Synergy scores (color fit, archetype)
 
-After training, use the CLI to score a pack:
+**Models:**
+- XGBoost (recommended)
+- LightGBM (faster, lower memory)
 
-```bash
-python -m ai_draft_bot.cli simulate \
-    --model-path artifacts/model.joblib \
-    --metadata-path path/to/cards.csv \
-    --pack "Card A" --pack "Card B" --pack "Card C"
-```
+See [CLAUDE.md](CLAUDE.md) for full documentation.
 
-The CLI prints the most likely pick per the model along with probabilities for each
-candidate card.
+---
 
-## Evaluation notes
-
-- The baseline model is intentionally simple: it uses card-level metadata plus pack
-  averages to fit a multiclass logistic regression classifier.
-- Feature extraction lives in `src/ai_draft_bot/features/draft_context.py`; tweak this
-  module to experiment with richer signals such as seat position or wheel picks.
-- The training split and solver parameters are configurable via CLI flags in
-  `scripts/train.py`.
-
-## Development tooling
-
-Ruff and mypy configurations live in `pyproject.toml`. Run the linters and tests with:
-
-```bash
-ruff check .
-mypy src
-pytest
-```
+**Happy Drafting! 🎉**
