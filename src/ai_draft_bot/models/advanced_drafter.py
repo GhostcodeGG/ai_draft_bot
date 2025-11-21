@@ -8,6 +8,7 @@ This module provides state-of-the-art models for draft pick prediction:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -17,6 +18,8 @@ import joblib
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+
+logger = logging.getLogger("ai_draft_bot.models.advanced_drafter")
 
 try:
     import xgboost as xgb
@@ -311,15 +314,30 @@ def train_advanced_model(
     if config is None:
         config = AdvancedTrainConfig()
 
+    logger.info("=" * 60)
+    logger.info(f"ADVANCED MODEL TRAINING ({config.model_type.value.upper()})")
+    logger.info("=" * 60)
+    logger.info(f"Dataset size: {len(rows)} picks")
+
     # Encode dataset
     features, labels, encoder = _encode_dataset(rows)
+    logger.info(f"Feature dimension: {features.shape[1]}")
+    logger.info(f"Unique labels (cards): {len(encoder.classes_)}")
 
     # Train/validation split
     x_train, x_val, y_train, y_val = train_test_split(
         features, labels, test_size=config.test_size, random_state=config.random_state
     )
+    logger.info(f"Train/validation split: {len(x_train)}/{len(x_val)} ({config.test_size:.0%} validation)")
+    logger.info(
+        f"Hyperparameters: n_estimators={config.n_estimators}, max_depth={config.max_depth}, "
+        f"learning_rate={config.learning_rate}"
+    )
+    if config.use_gpu:
+        logger.info("GPU acceleration: ENABLED")
 
     # Train model based on type
+    logger.info(f"Training {config.model_type.value} model...")
     if config.model_type == ModelType.XGBOOST:
         model, accuracy, importance = train_xgboost_model(
             x_train, y_train, x_val, y_val, config
@@ -330,6 +348,8 @@ def train_advanced_model(
         )
     else:
         raise ValueError(f"Unsupported model type: {config.model_type}")
+
+    logger.info(f"Validation accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
 
     # Create artifacts
     artifacts = AdvancedTrainingArtifacts(
@@ -347,4 +367,13 @@ def train_advanced_model(
         feature_importance={i: float(importance[i]) for i in range(len(importance))},
     )
 
+    # Log feature importance summary
+    if importance is not None:
+        top_k = 10
+        top_indices = np.argsort(importance)[-top_k:][::-1]
+        logger.info(f"Top {top_k} most important features:")
+        for idx in top_indices:
+            logger.info(f"  Feature {idx}: {importance[idx]:.4f}")
+
+    logger.info("Training complete!")
     return AdvancedTrainResult(model=AdvancedDraftModel(artifacts), metrics=metrics)

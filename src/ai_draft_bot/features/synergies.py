@@ -221,7 +221,7 @@ def compute_archetype_synergy(card: CardMetadata, deck_cards: List[CardMetadata]
         # RG aggro: bonus for low-cost creatures
         if "creature" in card_keywords and card.mana_value <= 3:
             synergy_score = 0.9
-    elif archetype == "spells" and "instant" in card_keywords or "sorcery" in card_keywords:
+    elif archetype == "spells" and ("instant" in card_keywords or "sorcery" in card_keywords):
         # UR spells: bonus for instants/sorceries
         synergy_score = 0.9
 

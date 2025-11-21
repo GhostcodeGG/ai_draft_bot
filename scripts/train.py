@@ -6,7 +6,11 @@ from pathlib import Path
 
 import typer
 
-from ai_draft_bot.data.ingest_17l import parse_card_metadata, parse_draft_logs
+from ai_draft_bot.data.ingest_17l import (
+    parse_card_metadata,
+    parse_draft_logs,
+    validate_card_coverage,
+)
 from ai_draft_bot.features.draft_context import build_advanced_pick_features, build_pick_features
 from ai_draft_bot.models.advanced_drafter import (
     AdvancedTrainConfig,
@@ -14,6 +18,7 @@ from ai_draft_bot.models.advanced_drafter import (
     train_advanced_model,
 )
 from ai_draft_bot.models.drafter import TrainConfig, train_model
+from ai_draft_bot.utils.logging_config import setup_logging
 
 app = typer.Typer(help="Train models from 17L exports")
 
@@ -27,21 +32,42 @@ def run(
     max_iter: int = typer.Option(500, help="Max iterations for logistic regression"),
     c: float = typer.Option(1.0, help="Inverse regularization strength"),
     random_state: int = typer.Option(13, help="Deterministic split for reproducibility"),
+    log_level: str = typer.Option("INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR)"),
 ) -> None:
     """Train the baseline drafter."""
+
+    # Initialize logging
+    setup_logging(level=log_level)
 
     typer.echo("Loading datasets…")
     picks = parse_draft_logs(drafts_path)
     metadata = parse_card_metadata(metadata_path)
 
     if not picks:
-        typer.echo("No picks loaded from draft log. Aborting.")
+        typer.echo(
+            "❌ ERROR: No picks loaded from draft log.\n"
+            f"   - Check that {drafts_path} exists and is a valid JSONL file\n"
+            "   - Each line should be valid JSON with draft data"
+        )
         raise typer.Exit(code=1)
+
+    # Validate card coverage
+    missing_cards = validate_card_coverage(picks, metadata)
+    if missing_cards and len(missing_cards) > len(metadata) * 0.5:
+        typer.echo(
+            f"⚠️  WARNING: {len(missing_cards)} cards missing from metadata (>50% of cards)\n"
+            "   This may indicate a mismatch between draft logs and metadata files."
+        )
 
     typer.echo(f"Loaded {len(picks)} picks; building features…")
     rows = build_pick_features(picks, metadata)
     if not rows:
-        typer.echo("No features built; ensure card names align between logs and metadata.")
+        typer.echo(
+            "❌ ERROR: No features built. Possible causes:\n"
+            "   - Card names in draft logs don't match metadata CSV\n"
+            "   - All picks have empty packs or missing metadata\n"
+            f"   - Check that {metadata_path} contains the correct card data"
+        )
         raise typer.Exit(code=1)
 
     config = TrainConfig(
@@ -83,6 +109,7 @@ def advanced(
     early_stopping: int = typer.Option(50, help="Early stopping rounds"),
     use_gpu: bool = typer.Option(False, help="Use GPU acceleration if available"),
     random_state: int = typer.Option(13, help="Random seed for reproducibility"),
+    log_level: str = typer.Option("INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR)"),
 ) -> None:
     """Train an ADVANCED drafter with XGBoost/LightGBM and 75+ features.
 
@@ -93,21 +120,42 @@ def advanced(
     - Synergy features (color/curve/archetype fit)
     - Pack signals (bombs, rares, win rate distribution)
     """
+    # Initialize logging
+    setup_logging(level=log_level)
+
     typer.echo(f"🚀 Training ADVANCED model with {model_type.value}...")
     typer.echo("Loading datasets…")
     picks = parse_draft_logs(drafts_path)
     metadata = parse_card_metadata(metadata_path)
 
     if not picks:
-        typer.echo("❌ No picks loaded from draft log. Aborting.")
+        typer.echo(
+            "❌ ERROR: No picks loaded from draft log.\n"
+            f"   - Check that {drafts_path} exists and is a valid JSONL file\n"
+            "   - Each line should be valid JSON with draft data"
+        )
         raise typer.Exit(code=1)
+
+    # Validate card coverage
+    missing_cards = validate_card_coverage(picks, metadata)
+    if missing_cards and len(missing_cards) > len(metadata) * 0.5:
+        typer.echo(
+            f"⚠️  WARNING: {len(missing_cards)} cards missing from metadata (>50% of cards)\n"
+            "   This may indicate a mismatch between draft logs and metadata files."
+        )
 
     typer.echo(f"✓ Loaded {len(picks)} picks")
     typer.echo("🔧 Building ADVANCED features (75+ dimensions)...")
     rows = build_advanced_pick_features(picks, metadata)
 
     if not rows:
-        typer.echo("❌ No features built; ensure card names align between logs and metadata.")
+        typer.echo(
+            "❌ ERROR: No features built. Possible causes:\n"
+            "   - Card names in draft logs don't match metadata CSV\n"
+            "   - All picks have empty packs or missing metadata\n"
+            f"   - Check that {metadata_path} contains the correct card data\n"
+            "   - For advanced features, ensure win rate columns are present in metadata"
+        )
         raise typer.Exit(code=1)
 
     typer.echo(f"✓ Built {len(rows)} feature vectors")

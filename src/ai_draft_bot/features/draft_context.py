@@ -93,8 +93,12 @@ def build_pick_features(
     - Mean mana value and rarity across the pack
     - Color distribution across the pack
     """
+    logger.info(f"Building baseline features for {len(picks)} pick records")
 
     feature_rows: List[PickFeatures] = []
+    skipped_no_pack = 0
+    skipped_no_label = 0
+
     for pick in picks:
         pack_vectors: List[np.ndarray] = []
         for name in pick.pack_contents:
@@ -102,6 +106,7 @@ def build_pick_features(
             if card:
                 pack_vectors.append(card_to_vector(card))
         if not pack_vectors:
+            skipped_no_pack += 1
             continue
 
         pack_matrix = np.vstack(pack_vectors)
@@ -110,10 +115,20 @@ def build_pick_features(
         chosen_card = metadata.get(pick.chosen_card)
         if not chosen_card:
             # Skip if we cannot label the pick
+            skipped_no_label += 1
             continue
 
         feature_vector = np.concatenate([card_to_vector(chosen_card), pack_mean])
         feature_rows.append(PickFeatures(features=feature_vector, label=pick.chosen_card))
+
+    logger.info(f"Generated {len(feature_rows)} feature vectors (16 dimensions)")
+    if skipped_no_pack > 0:
+        logger.warning(f"Skipped {skipped_no_pack} picks with no valid pack cards in metadata")
+    if skipped_no_label > 0:
+        logger.warning(
+            f"Skipped {skipped_no_label} picks with chosen card not in metadata"
+        )
+
     return feature_rows
 
 
@@ -139,12 +154,19 @@ def build_advanced_pick_features(
     - Synergy features (6): color/curve/balance/archetype fit
     Total: ~75 features (vs baseline 16)
     """
+    logger.info(f"Building ADVANCED features for {len(picks)} pick records")
+
     # Group picks by event to track draft progression
     grouped_picks = group_picks_by_event(picks)
+    logger.info(f"Processing {len(grouped_picks)} unique draft events")
 
     feature_rows: List[PickFeatures] = []
+    skipped_no_pack = 0
+    skipped_no_label = 0
 
-    for _event_id, event_picks in grouped_picks.items():
+    for event_idx, (_event_id, event_picks) in enumerate(grouped_picks.items(), 1):
+        if event_idx % 100 == 0:
+            logger.debug(f"Processing event {event_idx}/{len(grouped_picks)}")
         # Track cards picked so far in this draft
         picked_so_far: List[str] = []
 
@@ -160,6 +182,7 @@ def build_advanced_pick_features(
                     pack_cards.append(card)
 
             if not pack_vectors or not pack_cards:
+                skipped_no_pack += 1
                 continue
 
             pack_matrix = np.vstack(pack_vectors)
@@ -196,6 +219,7 @@ def build_advanced_pick_features(
             # Chosen card features
             chosen_card = metadata.get(pick.chosen_card)
             if not chosen_card:
+                skipped_no_label += 1
                 continue
 
             chosen_vector = card_to_vector(chosen_card, include_winrates=True)
@@ -222,6 +246,20 @@ def build_advanced_pick_features(
 
             # Update picked cards for next iteration
             picked_so_far.append(pick.chosen_card)
+
+    # Log summary
+    if feature_rows:
+        feature_dim = len(feature_rows[0].features)
+        logger.info(f"Generated {len(feature_rows)} feature vectors ({feature_dim} dimensions)")
+    else:
+        logger.warning("No feature vectors generated!")
+
+    if skipped_no_pack > 0:
+        logger.warning(f"Skipped {skipped_no_pack} picks with no valid pack cards in metadata")
+    if skipped_no_label > 0:
+        logger.warning(
+            f"Skipped {skipped_no_label} picks with chosen card not in metadata"
+        )
 
     return feature_rows
 

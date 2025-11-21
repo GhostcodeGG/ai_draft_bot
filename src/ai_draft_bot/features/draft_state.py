@@ -58,14 +58,14 @@ class DeckStats:
     """
 
     total_cards: int = 0
-    color_counts: Mapping[str, int] = field(default_factory=dict)
+    color_counts: dict[str, int] = field(default_factory=dict)
     color_commitment: List[str] = field(default_factory=list)
     avg_mana_value: float = 0.0
     mana_curve: List[int] = field(default_factory=lambda: [0] * 7)
     creature_count: int = 0
     spell_count: int = 0
     removal_count: int = 0
-    rarity_distribution: Mapping[str, int] = field(default_factory=dict)
+    rarity_distribution: dict[str, int] = field(default_factory=dict)
     avg_gih_wr: float = 0.0
 
 
