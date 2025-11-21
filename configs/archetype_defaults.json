@@ -1,0 +1,135 @@
+{
+  "description": "Default cross-set archetype definitions for MTG Limited",
+  "archetypes": [
+    {
+      "name": "WU Fliers",
+      "primary_colors": ["W", "U"],
+      "secondary_colors": [],
+      "keywords": ["flying", "flash", "bounce", "tempo"],
+      "synergy_types": ["evasion", "tempo"],
+      "card_preferences": {
+        "creature": 0.65,
+        "instant": 0.20,
+        "enchantment": 0.10
+      },
+      "target_curve": 2.8
+    },
+    {
+      "name": "UB Control",
+      "primary_colors": ["U", "B"],
+      "secondary_colors": [],
+      "keywords": ["draw", "removal", "counter", "mill"],
+      "synergy_types": ["control", "card_advantage"],
+      "card_preferences": {
+        "instant": 0.25,
+        "sorcery": 0.15,
+        "creature": 0.50
+      },
+      "target_curve": 3.5
+    },
+    {
+      "name": "BR Sacrifice",
+      "primary_colors": ["B", "R"],
+      "secondary_colors": [],
+      "keywords": ["sacrifice", "dies", "damage", "token"],
+      "synergy_types": ["sacrifice", "aristocrats"],
+      "card_preferences": {
+        "creature": 0.70,
+        "sorcery": 0.15,
+        "instant": 0.10
+      },
+      "target_curve": 3.0
+    },
+    {
+      "name": "RG Aggro",
+      "primary_colors": ["R", "G"],
+      "secondary_colors": [],
+      "keywords": ["haste", "trample", "power", "pump"],
+      "synergy_types": ["aggro", "combat"],
+      "card_preferences": {
+        "creature": 0.75,
+        "instant": 0.15,
+        "sorcery": 0.05
+      },
+      "target_curve": 2.5
+    },
+    {
+      "name": "GW Tokens",
+      "primary_colors": ["G", "W"],
+      "secondary_colors": [],
+      "keywords": ["token", "anthem", "pump", "convoke"],
+      "synergy_types": ["tokens", "go_wide"],
+      "card_preferences": {
+        "creature": 0.65,
+        "enchantment": 0.15,
+        "sorcery": 0.10
+      },
+      "target_curve": 3.2
+    },
+    {
+      "name": "WB Lifegain",
+      "primary_colors": ["W", "B"],
+      "secondary_colors": [],
+      "keywords": ["lifegain", "lifelink", "drain", "extort"],
+      "synergy_types": ["lifegain", "attrition"],
+      "card_preferences": {
+        "creature": 0.65,
+        "enchantment": 0.15,
+        "instant": 0.10
+      },
+      "target_curve": 3.0
+    },
+    {
+      "name": "UR Spells",
+      "primary_colors": ["U", "R"],
+      "secondary_colors": [],
+      "keywords": ["instant", "sorcery", "prowess", "magecraft", "draw"],
+      "synergy_types": ["spells_matter", "tempo"],
+      "card_preferences": {
+        "instant": 0.30,
+        "sorcery": 0.20,
+        "creature": 0.45
+      },
+      "target_curve": 2.8
+    },
+    {
+      "name": "BG Graveyard",
+      "primary_colors": ["B", "G"],
+      "secondary_colors": [],
+      "keywords": ["graveyard", "mill", "recursion", "delve", "escape"],
+      "synergy_types": ["graveyard", "value"],
+      "card_preferences": {
+        "creature": 0.65,
+        "sorcery": 0.15,
+        "instant": 0.10
+      },
+      "target_curve": 3.3
+    },
+    {
+      "name": "RW Aggro",
+      "primary_colors": ["R", "W"],
+      "secondary_colors": [],
+      "keywords": ["first strike", "haste", "equipment", "double strike"],
+      "synergy_types": ["aggro", "combat"],
+      "card_preferences": {
+        "creature": 0.70,
+        "artifact": 0.10,
+        "instant": 0.15
+      },
+      "target_curve": 2.6
+    },
+    {
+      "name": "GU Ramp",
+      "primary_colors": ["G", "U"],
+      "secondary_colors": [],
+      "keywords": ["ramp", "draw", "bounce", "flash"],
+      "synergy_types": ["ramp", "card_advantage"],
+      "card_preferences": {
+        "creature": 0.60,
+        "sorcery": 0.15,
+        "instant": 0.15
+      },
+      "target_curve": 3.8
+    }
+  ]
+}
