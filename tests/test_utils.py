@@ -32,3 +32,14 @@ def test_topk_and_ndcg_metrics() -> None:
     ndcg = ndcg_at_ks(probs, labels, ks=(1, 2))
     assert ndcg[1] > 0.9
     assert ndcg[2] > 0.9
+
+
+def test_ndcg_returns_zero_when_label_not_in_topk() -> None:
+    probs = np.array([[0.6, 0.3, 0.1]])
+    labels = np.array([2])
+
+    ndcg = ndcg_at_ks(probs, labels, ks=(1, 2, 3))
+    assert ndcg[1] == 0.0
+    assert ndcg[2] == 0.0
+    # In full ranking, label appears at rank 3 -> 1/log2(4)
+    assert np.isclose(ndcg[3], 1.0 / np.log2(4))

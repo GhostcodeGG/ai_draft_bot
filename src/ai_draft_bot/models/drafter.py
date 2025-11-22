@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Mapping, Sequence, Tuple
+from typing import Iterable, List, Mapping, Sequence
 
 import joblib
 import numpy as np
@@ -85,19 +85,29 @@ class TrainResult:
     metrics: EvaluationMetrics
 
 
-def _encode_dataset(rows: Sequence[PickFeatures]) -> Tuple[np.ndarray, np.ndarray, LabelEncoder]:
-    features = np.vstack([row.features for row in rows])
-    labels = [row.label for row in rows]
+def _fit_label_encoder(rows: Sequence[PickFeatures]) -> LabelEncoder:
+    """Fit a label encoder on the provided rows."""
     encoder = LabelEncoder()
-    encoded_labels = encoder.fit_transform(labels)
-    return features, encoded_labels, encoder
+    encoder.fit([row.label for row in rows])
+    return encoder
 
 
 def _encode_with_encoder(
-    rows: Sequence[PickFeatures], encoder: LabelEncoder
+    rows: Sequence[PickFeatures], encoder: LabelEncoder, *, drop_unknown: bool = False
 ) -> Tuple[np.ndarray, np.ndarray]:
-    features = np.vstack([row.features for row in rows])
-    labels = encoder.transform([row.label for row in rows])
+    """Encode rows with an existing encoder, optionally dropping unseen labels."""
+    filtered_rows: list[PickFeatures] = []
+    for row in rows:
+        if row.label in encoder.classes_:
+            filtered_rows.append(row)
+        elif not drop_unknown:
+            filtered_rows.append(row)
+
+    if not filtered_rows:
+        return np.empty((0, 0)), np.array([], dtype=int)
+
+    features = np.vstack([row.features for row in filtered_rows])
+    labels = encoder.transform([row.label for row in filtered_rows])
     return features, labels
 
 
@@ -124,11 +134,15 @@ def train_model(rows: Sequence[PickFeatures], *, config: TrainConfig | None = No
         f"({config.test_size:.0%} validation)"
     )
 
-    features_all, _, encoder = _encode_dataset(rows)
+    encoder = _fit_label_encoder(train_rows)
     x_train, y_train = _encode_with_encoder(train_rows, encoder)
-    x_val, y_val = _encode_with_encoder(val_rows, encoder)
+    x_val, y_val = _encode_with_encoder(val_rows, encoder, drop_unknown=True)
 
-    logger.info(f"Feature dimension: {features_all.shape[1]}")
+    # Drop validation rows with unseen labels to avoid class mismatch
+    if x_val.size == 0 or y_val.size == 0:
+        raise ValueError("Validation split contained only unseen labels. Provide more data.")
+
+    logger.info(f"Feature dimension: {x_train.shape[1]}")
     logger.info(f"Unique labels (cards): {len(encoder.classes_)}")
     logger.info(f"Hyperparameters: max_iter={config.max_iter}, C={config.C}")
 

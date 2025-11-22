@@ -1,4 +1,4 @@
-"""Train drafter models (baseline or advanced)."""
+"""Train drafter models (baseline, advanced, ultra, or optimized)."""
 
 from __future__ import annotations
 
@@ -25,7 +25,16 @@ from ai_draft_bot.models.drafter import TrainConfig, train_model
 from ai_draft_bot.optimization.optuna_tuner import OptunaConfig, optimize_and_train
 from ai_draft_bot.utils.logging_config import setup_logging
 
-app = typer.Typer(help="Train models from 17L exports")
+app = typer.Typer(help="Train models from 17L draft exports.")
+
+
+def _warn_missing_metadata(picks, metadata) -> None:
+    missing_cards = validate_card_coverage(picks, metadata)
+    if missing_cards and len(missing_cards) > len(metadata) * 0.5:
+        typer.echo(
+            f"[WARN] {len(missing_cards)} cards missing from metadata (>50% of cards).\n"
+            "       Draft logs and metadata may be from different sets."
+        )
 
 
 @app.command()
@@ -39,39 +48,29 @@ def run(
     random_state: int = typer.Option(13, help="Deterministic split for reproducibility"),
     log_level: str = typer.Option("INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR)"),
 ) -> None:
-    """Train the baseline drafter."""
-
-    # Initialize logging
+    """Train the baseline drafter (logistic regression, 16 features)."""
     setup_logging(level=log_level)
 
-    typer.echo("Loading datasets…")
+    typer.echo("Loading datasets.")
     picks = parse_draft_logs(drafts_path)
     metadata = parse_card_metadata(metadata_path)
 
     if not picks:
         typer.echo(
-            "❌ ERROR: No picks loaded from draft log.\n"
-            f"   - Check that {drafts_path} exists and is a valid JSONL file\n"
-            "   - Each line should be valid JSON with draft data"
+            "[ERROR] No picks loaded from draft log.\n"
+            f"        Check that {drafts_path} is a valid JSONL file."
         )
         raise typer.Exit(code=1)
 
-    # Validate card coverage
-    missing_cards = validate_card_coverage(picks, metadata)
-    if missing_cards and len(missing_cards) > len(metadata) * 0.5:
-        typer.echo(
-            f"⚠️  WARNING: {len(missing_cards)} cards missing from metadata (>50% of cards)\n"
-            "   This may indicate a mismatch between draft logs and metadata files."
-        )
+    _warn_missing_metadata(picks, metadata)
 
-    typer.echo(f"Loaded {len(picks)} picks; building features…")
+    typer.echo(f"Loaded {len(picks)} picks; building baseline features (16 dims).")
     rows = build_pick_features(picks, metadata)
     if not rows:
         typer.echo(
-            "❌ ERROR: No features built. Possible causes:\n"
-            "   - Card names in draft logs don't match metadata CSV\n"
-            "   - All picks have empty packs or missing metadata\n"
-            f"   - Check that {metadata_path} contains the correct card data"
+            "[ERROR] No features built.\n"
+            "        - Card names may not match the metadata CSV\n"
+            "        - Packs may be empty or missing metadata rows"
         )
         raise typer.Exit(code=1)
 
@@ -84,7 +83,6 @@ def run(
     result = train_model(rows, config=config)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    _ = result.model.artifacts.model.classes_  # ensure model is fitted before saving
     result.model.save(output_path)
 
     typer.echo(
@@ -116,55 +114,35 @@ def advanced(
     random_state: int = typer.Option(13, help="Random seed for reproducibility"),
     log_level: str = typer.Option("INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR)"),
 ) -> None:
-    """Train an ADVANCED drafter with XGBoost/LightGBM and 75+ features.
-
-    This uses:
-    - Win rate statistics (GIH WR, IWD, ALSA)
-    - Draft context (pick/pack number, cards picked so far)
-    - Deck composition (mana curve, color commitment, creature count)
-    - Synergy features (color/curve/archetype fit)
-    - Pack signals (bombs, rares, win rate distribution)
-    """
-    # Initialize logging
+    """Train an ADVANCED drafter with 78 features."""
     setup_logging(level=log_level)
 
-    typer.echo(f"🚀 Training ADVANCED model with {model_type.value}...")
-    typer.echo("Loading datasets…")
+    typer.echo(f"Training ADVANCED model with {model_type.value}...")
+    typer.echo("Loading datasets.")
     picks = parse_draft_logs(drafts_path)
     metadata = parse_card_metadata(metadata_path)
 
     if not picks:
-        typer.echo(
-            "❌ ERROR: No picks loaded from draft log.\n"
-            f"   - Check that {drafts_path} exists and is a valid JSONL file\n"
-            "   - Each line should be valid JSON with draft data"
-        )
+        typer.echo("[ERROR] No picks loaded from draft log.")
         raise typer.Exit(code=1)
 
-    # Validate card coverage
-    missing_cards = validate_card_coverage(picks, metadata)
-    if missing_cards and len(missing_cards) > len(metadata) * 0.5:
-        typer.echo(
-            f"⚠️  WARNING: {len(missing_cards)} cards missing from metadata (>50% of cards)\n"
-            "   This may indicate a mismatch between draft logs and metadata files."
-        )
+    _warn_missing_metadata(picks, metadata)
 
-    typer.echo(f"✓ Loaded {len(picks)} picks")
-    typer.echo("🔧 Building ADVANCED features (75+ dimensions)...")
+    typer.echo(f"Loaded {len(picks)} picks")
+    typer.echo("Building ADVANCED features (78 dims)...")
     rows = build_advanced_pick_features(picks, metadata)
 
     if not rows:
         typer.echo(
-            "❌ ERROR: No features built. Possible causes:\n"
-            "   - Card names in draft logs don't match metadata CSV\n"
-            "   - All picks have empty packs or missing metadata\n"
-            f"   - Check that {metadata_path} contains the correct card data\n"
-            "   - For advanced features, ensure win rate columns are present in metadata"
+            "[ERROR] No features built.\n"
+            "        - Card names may not match the metadata CSV\n"
+            "        - Packs may be empty or missing metadata rows\n"
+            "        - Win rate columns may be missing for advanced features"
         )
         raise typer.Exit(code=1)
 
-    typer.echo(f"✓ Built {len(rows)} feature vectors")
-    typer.echo(f"📊 Feature dimensionality: {rows[0].features.shape[0]} features")
+    typer.echo(f"Built {len(rows)} feature vectors")
+    typer.echo(f"Feature dimensionality: {rows[0].features.shape[0]} features")
 
     config = AdvancedTrainConfig(
         model_type=model_type,
@@ -177,33 +155,31 @@ def advanced(
         random_state=random_state,
     )
 
-    typer.echo("🏋️ Training model...")
+    typer.echo("Training model...")
     result = train_advanced_model(rows, config=config)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result.model.save(output_path)
 
     typer.echo("=" * 60)
-    typer.echo("🎉 TRAINING COMPLETE!")
+    typer.echo("ADVANCED TRAINING COMPLETE")
     typer.echo(
-        "📈 Validation Accuracy: {:.3f} ({:.1f}%)".format(
+        "Validation Accuracy: {:.3f} ({:.1f}%)".format(
             result.metrics.accuracy, result.metrics.accuracy * 100
         )
     )
-    typer.echo(f"📦 Training samples: {result.metrics.train_samples}")
-    typer.echo(f"📦 Validation samples: {result.metrics.validation_samples}")
+    typer.echo(f"Training samples: {result.metrics.train_samples}")
+    typer.echo(f"Validation samples: {result.metrics.validation_samples}")
 
-    # Show top feature importance
     if result.metrics.feature_importance:
-        typer.echo("\n🔝 Top 10 Most Important Features:")
+        typer.echo("\nTop 10 Most Important Features:")
         sorted_feats = sorted(
             result.metrics.feature_importance.items(), key=lambda x: x[1], reverse=True
         )[:10]
         for feat_idx, importance in sorted_feats:
-            typer.echo(f"   Feature {feat_idx}: {importance:.2f}")
+            typer.echo(f"  Feature {feat_idx}: {importance:.2f}")
 
-    typer.echo(f"\n💾 Model saved to {output_path}")
-    typer.echo("=" * 60)
+    typer.echo(f"\nModel saved to {output_path}")
 
 
 @app.command()
@@ -216,89 +192,48 @@ def ultra(
     model_type: ModelType = typer.Option(
         ModelType.XGBOOST, help="Model architecture (xgboost, lightgbm)"
     ),
-    archetype_config: Path | None = typer.Option(
-        None, help="Path to archetype config JSON (uses defaults if not specified)"
-    ),
     test_size: float = typer.Option(0.2, help="Validation split fraction"),
     n_estimators: int = typer.Option(500, help="Number of boosting rounds"),
-    max_depth: int = typer.Option(10, help="Maximum tree depth (increased for more features)"),
-    learning_rate: float = typer.Option(0.05, help="Learning rate (reduced for stability)"),
+    max_depth: int = typer.Option(8, help="Maximum tree depth"),
+    learning_rate: float = typer.Option(0.1, help="Learning rate"),
     early_stopping: int = typer.Option(50, help="Early stopping rounds"),
     use_gpu: bool = typer.Option(False, help="Use GPU acceleration if available"),
     random_state: int = typer.Option(13, help="Random seed for reproducibility"),
     log_level: str = typer.Option("INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR)"),
+    archetype_config: Path | None = typer.Option(
+        None, help="Archetype config JSON (used for ultra features)"
+    ),
 ) -> None:
-    """Train an ULTRA-ADVANCED drafter with 130+ features.
-
-    This uses ALL enhancements:
-    - All advanced features (78 dims)
-    - Card text analysis (11 dims)
-    - Positional features (13 dims)
-    - Opponent modeling (16 dims)
-    - Enhanced archetypes (4 dims)
-    - Win rate interactions (8 dims)
-
-    Total: ~130 features for superhuman draft pick prediction!
-    """
-    # Initialize logging
+    """Train an ULTRA drafter with 130+ features."""
     setup_logging(level=log_level)
 
-    typer.echo("=" * 70)
-    typer.echo("🚀 ULTRA-ADVANCED MODEL TRAINING")
-    typer.echo("=" * 70)
-    typer.echo(f"Model type: {model_type.value}")
-    typer.echo(
-        "Features: 130+ dimensions "
-        "(text, positional, opponent, archetypes, WR interactions)"
-    )
-    typer.echo()
-
-    typer.echo("📁 Loading datasets…")
+    typer.echo("Training ULTRA model...")
+    typer.echo("Loading datasets.")
     picks = parse_draft_logs(drafts_path)
     metadata = parse_card_metadata(metadata_path)
 
     if not picks:
-        typer.echo(
-            "❌ ERROR: No picks loaded from draft log.\n"
-            f"   - Check that {drafts_path} exists and is a valid JSONL file\n"
-            "   - Each line should be valid JSON with draft data"
-        )
+        typer.echo("[ERROR] No picks loaded from draft log.")
         raise typer.Exit(code=1)
 
-    # Validate card coverage
-    missing_cards = validate_card_coverage(picks, metadata)
-    if missing_cards and len(missing_cards) > len(metadata) * 0.5:
-        typer.echo(
-            f"⚠️  WARNING: {len(missing_cards)} cards missing from metadata (>50% of cards)\n"
-            "   This may indicate a mismatch between draft logs and metadata files."
-        )
+    _warn_missing_metadata(picks, metadata)
 
-    typer.echo(f"✓ Loaded {len(picks)} picks")
-    typer.echo("🔧 Building ULTRA-ADVANCED features (130+ dimensions)...")
-    typer.echo("   This includes:")
-    typer.echo("   • Card text analysis (keywords, removal, card advantage)")
-    typer.echo("   • Positional features (wheeling, color signals, pack quality)")
-    typer.echo("   • Opponent modeling (color competition, pivot opportunities)")
-    typer.echo("   • Enhanced archetypes (set-specific synergies)")
-    typer.echo("   • Win rate interactions (non-linear feature combinations)")
-    typer.echo()
-
+    typer.echo(f"Loaded {len(picks)} picks")
+    typer.echo("Building ULTRA features (130+ dims)...")
     archetype_config_str = str(archetype_config) if archetype_config else None
     rows = build_ultra_advanced_pick_features(picks, metadata, archetype_config_str)
 
     if not rows:
         typer.echo(
-            "❌ ERROR: No features built. Possible causes:\n"
-            "   - Card names in draft logs don't match metadata CSV\n"
-            "   - All picks have empty packs or missing metadata\n"
-            f"   - Check that {metadata_path} contains the correct card data\n"
-            "   - For ultra features, ensure win rate columns are present"
+            "[ERROR] No features built.\n"
+            "        - Card names may not match the metadata CSV\n"
+            "        - Packs may be empty or missing metadata rows\n"
+            "        - Win rate columns may be missing for ultra features"
         )
         raise typer.Exit(code=1)
 
-    typer.echo(f"✓ Built {len(rows)} feature vectors")
-    typer.echo(f"📊 Feature dimensionality: {rows[0].features.shape[0]} features")
-    typer.echo()
+    typer.echo(f"Built {len(rows)} feature vectors")
+    typer.echo(f"Feature dimensionality: {rows[0].features.shape[0]} features")
 
     config = AdvancedTrainConfig(
         model_type=model_type,
@@ -311,37 +246,36 @@ def ultra(
         random_state=random_state,
     )
 
-    typer.echo("🏋️  Training ULTRA-ADVANCED model...")
+    typer.echo("Training ULTRA model...")
     result = train_advanced_model(rows, config=config)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result.model.save(output_path)
 
     typer.echo("=" * 70)
-    typer.echo("🎉 ULTRA-ADVANCED TRAINING COMPLETE!")
+    typer.echo("ULTRA TRAINING COMPLETE")
     typer.echo("=" * 70)
     typer.echo(
-        "📈 Validation Accuracy: {:.3f} ({:.1f}%)".format(
+        "Validation Accuracy: {:.3f} ({:.1f}%)".format(
             result.metrics.accuracy, result.metrics.accuracy * 100
         )
     )
-    typer.echo(f"📦 Training samples: {result.metrics.train_samples}")
-    typer.echo(f"📦 Validation samples: {result.metrics.validation_samples}")
+    typer.echo(f"Training samples: {result.metrics.train_samples}")
+    typer.echo(f"Validation samples: {result.metrics.validation_samples}")
 
-    # Show top feature importance
     if result.metrics.feature_importance:
-        typer.echo("\n🔝 Top 15 Most Important Features:")
+        typer.echo("\nTop 15 Most Important Features:")
         sorted_feats = sorted(
             result.metrics.feature_importance.items(), key=lambda x: x[1], reverse=True
         )[:15]
         for feat_idx, importance in sorted_feats:
-            typer.echo(f"   Feature {feat_idx}: {importance:.2f}")
+            typer.echo(f"  Feature {feat_idx}: {importance:.2f}")
 
-    typer.echo(f"\n💾 Model saved to {output_path}")
-    typer.echo("\n🎯 Expected performance improvement:")
-    typer.echo("   Baseline (16 features): ~40% accuracy")
-    typer.echo("   Advanced (78 features): ~60-70% accuracy")
-    typer.echo("   Ultra (130+ features): ~70-85% accuracy (TARGET: SUPERHUMAN)")
+    typer.echo(f"\nModel saved to {output_path}")
+    typer.echo("\nExpected performance (typical):")
+    typer.echo("  Baseline (16 features): ~40% accuracy")
+    typer.echo("  Advanced (78 features): ~60-70% accuracy")
+    typer.echo("  Ultra (130+ features): ~70-85% accuracy (target)")
     typer.echo("=" * 70)
 
 
@@ -361,59 +295,50 @@ def optimize(
     random_state: int = typer.Option(13, help="Random seed for reproducibility"),
     log_level: str = typer.Option("INFO", help="Logging level"),
     use_ultra_features: bool = typer.Option(
-        True, help="Use ultra-advanced features (130+) instead of advanced (78)"
+        True, help="Use ultra features (130+) instead of advanced (78)"
     ),
     archetype_config: Path | None = typer.Option(
         None, help="Archetype config for ultra features"
     ),
 ) -> None:
-    """AUTO-TUNE hyperparameters with Bayesian optimization (Optuna).
-
-    This command automatically finds the best hyperparameters for your dataset
-    using intelligent search strategies. Much better than manual tuning!
-
-    Expected improvement: +2-4% accuracy over default hyperparameters.
-    """
+    """Auto-tune hyperparameters with Optuna and train the final model."""
     setup_logging(level=log_level)
 
     typer.echo("=" * 70)
-    typer.echo("🎯 AUTOMATIC HYPERPARAMETER OPTIMIZATION (OPTUNA)")
+    typer.echo("AUTOMATIC HYPERPARAMETER OPTIMIZATION (OPTUNA)")
     typer.echo("=" * 70)
     typer.echo(f"Model type: {model_type.value}")
     typer.echo(f"Optimization trials: {n_trials}")
     typer.echo(f"Using {'ULTRA' if use_ultra_features else 'ADVANCED'} features")
     typer.echo()
 
-    typer.echo("📁 Loading datasets…")
+    typer.echo("Loading datasets.")
     picks = parse_draft_logs(drafts_path)
     metadata = parse_card_metadata(metadata_path)
 
     if not picks:
-        typer.echo("❌ ERROR: No picks loaded from draft log.")
+        typer.echo("[ERROR] No picks loaded from draft log.")
         raise typer.Exit(code=1)
 
     validate_card_coverage(picks, metadata)
+    typer.echo(f"Loaded {len(picks)} picks")
 
-    typer.echo(f"✓ Loaded {len(picks)} picks")
-
-    # Build features
     if use_ultra_features:
-        typer.echo("🔧 Building ULTRA-ADVANCED features (130+ dimensions)...")
+        typer.echo("Building ULTRA features (130+ dims)...")
         archetype_config_str = str(archetype_config) if archetype_config else None
         rows = build_ultra_advanced_pick_features(picks, metadata, archetype_config_str)
     else:
-        typer.echo("🔧 Building ADVANCED features (78 dimensions)...")
+        typer.echo("Building ADVANCED features (78 dims)...")
         rows = build_advanced_pick_features(picks, metadata)
 
     if not rows:
-        typer.echo("❌ ERROR: No features built.")
+        typer.echo("[ERROR] No features built.")
         raise typer.Exit(code=1)
 
-    typer.echo(f"✓ Built {len(rows)} feature vectors")
-    typer.echo(f"📊 Feature dimensionality: {rows[0].features.shape[0]} features")
+    typer.echo(f"Built {len(rows)} feature vectors")
+    typer.echo(f"Feature dimensionality: {rows[0].features.shape[0]} features")
     typer.echo()
 
-    # Configure Optuna
     optuna_config = OptunaConfig(
         n_trials=n_trials,
         model_type=model_type,
@@ -422,13 +347,10 @@ def optimize(
         use_gpu=use_gpu,
     )
 
-    typer.echo("🔍 Starting Bayesian hyperparameter search...")
-    typer.echo(
-        "   This will try different combinations to find optimal parameters"
-    )
+    typer.echo("Starting Bayesian hyperparameter search...")
+    typer.echo("  This will try different combinations to find optimal parameters.")
     typer.echo()
 
-    # Optimize and train
     result = optimize_and_train(rows, optuna_config)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -436,17 +358,16 @@ def optimize(
 
     typer.echo()
     typer.echo("=" * 70)
-    typer.echo("🎉 OPTIMIZATION COMPLETE!")
+    typer.echo("OPTIMIZATION COMPLETE")
     typer.echo("=" * 70)
     typer.echo(
-        f"📈 Final Validation Accuracy: {result.metrics.accuracy:.3f} "
+        f"Final Validation Accuracy: {result.metrics.accuracy:.3f} "
         f"({result.metrics.accuracy * 100:.1f}%)"
     )
-    typer.echo(f"📦 Training samples: {result.metrics.train_samples}")
-    typer.echo(f"📦 Validation samples: {result.metrics.validation_samples}")
-    typer.echo(f"\n💾 Optimized model saved to {output_path}")
-    typer.echo("\n💡 This model uses automatically tuned hyperparameters!")
-    typer.echo("   Expected +2-4% accuracy vs default settings.")
+    typer.echo(f"Training samples: {result.metrics.train_samples}")
+    typer.echo(f"Validation samples: {result.metrics.validation_samples}")
+    typer.echo(f"\nOptimized model saved to {output_path}")
+    typer.echo("\nExpected +2-4% accuracy vs default settings.")
     typer.echo("=" * 70)
 
 

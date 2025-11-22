@@ -22,7 +22,11 @@ def topk_accuracies(probs: np.ndarray, labels: np.ndarray, ks: Sequence[int]) ->
 
 
 def ndcg_at_ks(probs: np.ndarray, labels: np.ndarray, ks: Sequence[int]) -> dict[int, float]:
-    """Compute NDCG@k for multiclass predictions."""
+    """Compute NDCG@k for multiclass predictions with a single relevant label.
+
+    We normalize per-row using the ideal DCG (which is 1.0 for a single relevant
+    item at rank 1) so the metric is always in [0, 1].
+    """
     if probs.size == 0 or labels.size == 0:
         return {k: 0.0 for k in ks}
 
@@ -30,13 +34,16 @@ def ndcg_at_ks(probs: np.ndarray, labels: np.ndarray, ks: Sequence[int]) -> dict
     results: dict[int, float] = {}
 
     for k in ks:
-        dcg = 0.0
+        per_row_scores = []
         for label, ranking in zip(labels, sorted_indices):
-            # Find rank of the true label
+            # Rank is 0-indexed; add 2 to get 1-based + log2 denominator shift
             try:
                 rank = int(np.where(ranking[:k] == label)[0][0])
-                dcg += 1.0 / np.log2(rank + 2)
+                per_row_scores.append(1.0 / np.log2(rank + 2))
             except IndexError:
-                continue  # Not in top-k
-        results[k] = dcg / len(labels)
+                per_row_scores.append(0.0)
+
+        # IDCG for a single relevant item is 1.0, so the score is already normalized
+        results[k] = float(np.mean(per_row_scores))
+
     return results

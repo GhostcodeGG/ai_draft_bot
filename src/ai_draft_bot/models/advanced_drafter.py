@@ -185,16 +185,33 @@ class AdvancedTrainResult:
 
 
 def _encode_dataset(
-    rows: Sequence[PickFeatures], encoder: LabelEncoder | None = None
+    rows: Sequence[PickFeatures],
+    encoder: LabelEncoder | None = None,
+    *,
+    drop_unknown: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, LabelEncoder]:
-    """Encode dataset into feature matrix and label vector."""
-    features = np.vstack([row.features for row in rows])
-    labels = [row.label for row in rows]
+    """Encode dataset into feature matrix and label vector.
+
+    Args:
+        rows: Feature rows to encode.
+        encoder: Optional existing encoder. If None, a new encoder is fit on ``rows``.
+        drop_unknown: When True, rows whose labels are not in ``encoder`` are skipped.
+    """
     if encoder is None:
         encoder = LabelEncoder()
-        encoder.fit(labels)
-    encoded_labels = encoder.transform(labels)
-    return features, encoded_labels, encoder
+        encoder.fit([row.label for row in rows])
+
+    filtered_rows: list[PickFeatures] = []
+    for row in rows:
+        if row.label in encoder.classes_ or not drop_unknown:
+            filtered_rows.append(row)
+
+    if not filtered_rows:
+        return np.empty((0, 0)), np.array([], dtype=int), encoder
+
+    features = np.vstack([row.features for row in filtered_rows])
+    labels = encoder.transform([row.label for row in filtered_rows])
+    return features, labels, encoder
 
 
 def train_xgboost_model(
@@ -334,10 +351,14 @@ def train_advanced_model(
     if not val_rows:
         raise ValueError("Validation split is empty. Provide drafts from more than one event.")
 
-    # Encode dataset with shared encoder (fit on all labels to avoid unseen classes)
-    _, _, encoder = _encode_dataset(rows)
+    # Encode dataset with shared encoder fit on training labels to avoid leakage
+    encoder = LabelEncoder()
+    encoder.fit([row.label for row in train_rows])
     x_train, y_train, _ = _encode_dataset(train_rows, encoder)
-    x_val, y_val, _ = _encode_dataset(val_rows, encoder)
+    x_val, y_val, _ = _encode_dataset(val_rows, encoder, drop_unknown=True)
+
+    if x_val.size == 0 or y_val.size == 0:
+        raise ValueError("Validation split contained only unseen labels. Provide more data.")
 
     logger.info(f"Feature dimension: {x_train.shape[1]}")
     logger.info(f"Unique labels (cards): {len(encoder.classes_)}")

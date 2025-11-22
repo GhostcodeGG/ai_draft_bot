@@ -114,7 +114,7 @@ def build_pick_features(
         for name in pick.pack_contents:
             card = metadata.get(name)
             if card:
-                pack_vectors.append(card_to_vector(card))
+                pack_vectors.append(card_to_vector(card, include_winrates=False))
         if not pack_vectors:
             skipped_no_pack += 1
             continue
@@ -128,7 +128,9 @@ def build_pick_features(
             skipped_no_label += 1
             continue
 
-        feature_vector = np.concatenate([card_to_vector(chosen_card), pack_mean])
+        feature_vector = np.concatenate(
+            [card_to_vector(chosen_card, include_winrates=False), pack_mean]
+        )
         feature_rows.append(
             PickFeatures(features=feature_vector, label=pick.chosen_card, event_id=pick.event_id)
         )
