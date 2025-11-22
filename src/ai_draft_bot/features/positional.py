@@ -198,7 +198,10 @@ def compute_color_signal_strength(
         return 0.5  # First pick, no signal yet
 
     # Compute correlation between current and previous color signals
-    correlation = np.corrcoef(current_pack_colors, previous_pack_colors)[0, 1]
+    correlation_matrix = np.corrcoef(current_pack_colors, previous_pack_colors)
+    correlation = correlation_matrix[0, 1] if correlation_matrix.shape == (2, 2) else 0.0
+    if np.isnan(correlation):
+        correlation = 0.0
 
     # High correlation = strong/consistent signals
     # Low/negative correlation = weak/shifting signals

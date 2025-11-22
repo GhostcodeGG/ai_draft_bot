@@ -16,11 +16,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, TensorDataset
 
 from ai_draft_bot.features.draft_context import PickFeatures
+from ai_draft_bot.utils.metrics import ndcg_at_ks, topk_accuracies
+from ai_draft_bot.utils.splits import train_val_split_by_event
 
 logger = logging.getLogger("ai_draft_bot.models.neural_drafter")
 
@@ -127,6 +128,8 @@ class NeuralEvaluationMetrics:
     best_epoch: int
     final_train_loss: float
     final_val_loss: float
+    top_k: Mapping[int, float] | None = None
+    ndcg: Mapping[int, float] | None = None
 
 
 class NeuralDraftModel:
@@ -221,12 +224,15 @@ class NeuralTrainResult:
 
 def _encode_dataset(
     rows: Sequence[PickFeatures],
+    encoder: LabelEncoder | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, LabelEncoder]:
     """Encode dataset into feature matrix and label vector."""
     features = np.vstack([row.features for row in rows])
     labels = [row.label for row in rows]
-    encoder = LabelEncoder()
-    encoded_labels = encoder.fit_transform(labels)
+    if encoder is None:
+        encoder = LabelEncoder()
+        encoder.fit(labels)
+    encoded_labels = encoder.transform(labels)
     return features, encoded_labels, encoder
 
 
@@ -249,18 +255,25 @@ def train_neural_model(
     logger.info("NEURAL NETWORK TRAINING")
     logger.info("=" * 60)
     logger.info(f"Dataset size: {len(rows)} picks")
+    if not rows:
+        raise ValueError("No rows provided for training")
 
-    # Encode dataset
-    features, labels, encoder = _encode_dataset(rows)
-    logger.info(f"Feature dimension: {features.shape[1]}")
+    # Draft-aware split
+    split = train_val_split_by_event(rows, test_size=config.test_size, random_state=config.random_state)
+    train_rows, val_rows = split.train, split.val
+    if not val_rows:
+        raise ValueError("Validation split is empty. Provide drafts from more than one event.")
+
+    # Encode with shared encoder (fit on all labels to avoid unseen classes)
+    _, _, encoder = _encode_dataset(rows)
+    x_train, y_train, _ = _encode_dataset(train_rows, encoder)
+    x_val, y_val, _ = _encode_dataset(val_rows, encoder)
+
+    logger.info(f"Feature dimension: {x_train.shape[1]}")
     logger.info(f"Unique labels (cards): {len(encoder.classes_)}")
-
-    # Train/validation split
-    x_train, x_val, y_train, y_val = train_test_split(
-        features, labels, test_size=config.test_size, random_state=config.random_state
-    )
     logger.info(
-        f"Train/validation split: {len(x_train)}/{len(x_val)} ({config.test_size:.0%} validation)"
+        f"Train/validation split (by draft): {len(x_train)}/{len(x_val)} "
+        f"({config.test_size:.0%} validation)"
     )
 
     # Convert to PyTorch tensors
@@ -375,22 +388,39 @@ def train_neural_model(
         f"at epoch {best_epoch}"
     )
 
+    # Final evaluation on validation split
+    model.eval()
+    with torch.no_grad():
+        val_outputs = model(torch.FloatTensor(x_val).to(device))
+        val_probs = torch.softmax(val_outputs, dim=1).cpu().numpy()
+        val_pred = np.argmax(val_probs, axis=1)
+        final_val_accuracy = float(np.mean(val_pred == y_val))
+
+    top_k = topk_accuracies(val_probs, y_val, ks=(1, 3, 5))
+    ndcg = ndcg_at_ks(val_probs, y_val, ks=(1, 3, 5))
+
+    logger.info(f"Final validation accuracy: {final_val_accuracy:.4f}")
+    logger.info(f"Top-k accuracy: { {k: round(v, 3) for k, v in top_k.items()} }")
+    logger.info(f"NDCG: { {k: round(v, 3) for k, v in ndcg.items()} }")
+
     # Create artifacts
     artifacts = NeuralTrainingArtifacts(
         model=model,
         label_encoder=encoder,
-        feature_dim=features.shape[1],
+        feature_dim=x_train.shape[1],
         num_classes=len(encoder.classes_),
     )
 
     # Build metrics
     metrics = NeuralEvaluationMetrics(
-        accuracy=best_val_accuracy,
+        accuracy=final_val_accuracy,
         train_samples=len(x_train),
         validation_samples=len(x_val),
         best_epoch=best_epoch,
         final_train_loss=avg_train_loss,
         final_val_loss=avg_val_loss,
+        top_k=top_k,
+        ndcg=ndcg,
     )
 
     return NeuralTrainResult(model=NeuralDraftModel(artifacts), metrics=metrics)

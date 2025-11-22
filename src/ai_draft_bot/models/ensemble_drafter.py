@@ -17,7 +17,6 @@ from typing import List, Mapping, Sequence
 
 import joblib
 import numpy as np
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 from ai_draft_bot.features.draft_context import PickFeatures
@@ -27,6 +26,7 @@ from ai_draft_bot.models.advanced_drafter import (
     train_advanced_model,
 )
 from ai_draft_bot.models.neural_drafter import NeuralTrainConfig, train_neural_model
+from ai_draft_bot.utils.splits import train_val_split_by_event
 
 logger = logging.getLogger("ai_draft_bot.models.ensemble_drafter")
 
@@ -238,12 +238,12 @@ def train_ensemble_model(
     encoder = LabelEncoder()
     encoder.fit(labels)
 
-    # Split data
-    train_rows, val_rows = train_test_split(
-        rows, test_size=config.test_size, random_state=config.random_state
-    )
-
-    logger.info(f"Train/validation split: {len(train_rows)}/{len(val_rows)}")
+    # Draft-aware split
+    split = train_val_split_by_event(rows, test_size=config.test_size, random_state=config.random_state)
+    train_rows, val_rows = split.train, split.val
+    logger.info(f"Train/validation split (by draft): {len(train_rows)}/{len(val_rows)}")
+    if not val_rows:
+        raise ValueError("Validation split is empty. Provide drafts from more than one event.")
 
     # Train XGBoost
     logger.info("\n🔧 Training XGBoost model...")
@@ -252,7 +252,7 @@ def train_ensemble_model(
         test_size=config.test_size,
         random_state=config.random_state,
     )
-    xgb_result = train_advanced_model(rows, config=xgb_config)
+    xgb_result = train_advanced_model(train_rows, config=xgb_config)
     xgb_accuracy = xgb_result.metrics.accuracy
     logger.info(f"✓ XGBoost accuracy: {xgb_accuracy:.4f}")
 
@@ -263,7 +263,7 @@ def train_ensemble_model(
         test_size=config.test_size,
         random_state=config.random_state,
     )
-    lgb_result = train_advanced_model(rows, config=lgb_config)
+    lgb_result = train_advanced_model(train_rows, config=lgb_config)
     lgb_accuracy = lgb_result.metrics.accuracy
     logger.info(f"✓ LightGBM accuracy: {lgb_accuracy:.4f}")
 
@@ -273,7 +273,7 @@ def train_ensemble_model(
         test_size=config.test_size,
         random_state=config.random_state,
     )
-    nn_result = train_neural_model(rows, config=nn_config)
+    nn_result = train_neural_model(train_rows, config=nn_config)
     nn_accuracy = nn_result.metrics.accuracy
     logger.info(f"✓ Neural Network accuracy: {nn_accuracy:.4f}")
 

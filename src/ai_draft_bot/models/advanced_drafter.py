@@ -16,7 +16,6 @@ from typing import Mapping, Sequence, Tuple
 
 import joblib
 import numpy as np
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 logger = logging.getLogger("ai_draft_bot.models.advanced_drafter")
@@ -32,6 +31,8 @@ except ImportError:
     lgb = None  # type: ignore
 
 from ai_draft_bot.features.draft_context import PickFeatures
+from ai_draft_bot.utils.metrics import ndcg_at_ks, topk_accuracies
+from ai_draft_bot.utils.splits import train_val_split_by_event
 
 
 class ModelType(str, Enum):
@@ -85,6 +86,8 @@ class AdvancedEvaluationMetrics:
     train_samples: int
     validation_samples: int
     feature_importance: Mapping[int, float] | None = None
+    top_k: Mapping[int, float] | None = None
+    ndcg: Mapping[int, float] | None = None
 
 
 class AdvancedDraftModel:
@@ -181,12 +184,16 @@ class AdvancedTrainResult:
     metrics: AdvancedEvaluationMetrics
 
 
-def _encode_dataset(rows: Sequence[PickFeatures]) -> Tuple[np.ndarray, np.ndarray, LabelEncoder]:
+def _encode_dataset(
+    rows: Sequence[PickFeatures], encoder: LabelEncoder | None = None
+) -> Tuple[np.ndarray, np.ndarray, LabelEncoder]:
     """Encode dataset into feature matrix and label vector."""
     features = np.vstack([row.features for row in rows])
     labels = [row.label for row in rows]
-    encoder = LabelEncoder()
-    encoded_labels = encoder.fit_transform(labels)
+    if encoder is None:
+        encoder = LabelEncoder()
+        encoder.fit(labels)
+    encoded_labels = encoder.transform(labels)
     return features, encoded_labels, encoder
 
 
@@ -196,7 +203,7 @@ def train_xgboost_model(
     x_val: np.ndarray,
     y_val: np.ndarray,
     config: AdvancedTrainConfig,
-) -> Tuple[object, float, np.ndarray]:
+) -> Tuple[object, float, np.ndarray, np.ndarray]:
     """Train XGBoost model.
 
     Returns:
@@ -243,7 +250,7 @@ def train_xgboost_model(
         feat_idx = int(feat_name[1:])  # Remove 'f' prefix
         importance_array[feat_idx] = score
 
-    return model, accuracy, importance_array
+    return model, accuracy, importance_array, preds
 
 
 def train_lightgbm_model(
@@ -252,7 +259,7 @@ def train_lightgbm_model(
     x_val: np.ndarray,
     y_val: np.ndarray,
     config: AdvancedTrainConfig,
-) -> Tuple[object, float, np.ndarray]:
+) -> Tuple[object, float, np.ndarray, np.ndarray]:
     """Train LightGBM model.
 
     Returns:
@@ -296,7 +303,7 @@ def train_lightgbm_model(
     # Feature importance
     importance_array = model.feature_importance(importance_type="gain")
 
-    return model, accuracy, importance_array
+    return model, accuracy, importance_array, preds
 
 
 def train_advanced_model(
@@ -318,17 +325,26 @@ def train_advanced_model(
     logger.info(f"ADVANCED MODEL TRAINING ({config.model_type.value.upper()})")
     logger.info("=" * 60)
     logger.info(f"Dataset size: {len(rows)} picks")
+    if not rows:
+        raise ValueError("No rows provided for training")
 
-    # Encode dataset
-    features, labels, encoder = _encode_dataset(rows)
-    logger.info(f"Feature dimension: {features.shape[1]}")
+    # Draft-aware split
+    split = train_val_split_by_event(rows, test_size=config.test_size, random_state=config.random_state)
+    train_rows, val_rows = split.train, split.val
+    if not val_rows:
+        raise ValueError("Validation split is empty. Provide drafts from more than one event.")
+
+    # Encode dataset with shared encoder (fit on all labels to avoid unseen classes)
+    _, _, encoder = _encode_dataset(rows)
+    x_train, y_train, _ = _encode_dataset(train_rows, encoder)
+    x_val, y_val, _ = _encode_dataset(val_rows, encoder)
+
+    logger.info(f"Feature dimension: {x_train.shape[1]}")
     logger.info(f"Unique labels (cards): {len(encoder.classes_)}")
-
-    # Train/validation split
-    x_train, x_val, y_train, y_val = train_test_split(
-        features, labels, test_size=config.test_size, random_state=config.random_state
+    logger.info(
+        f"Train/validation split (by draft): {len(x_train)}/{len(x_val)} "
+        f"({config.test_size:.0%} validation)"
     )
-    logger.info(f"Train/validation split: {len(x_train)}/{len(x_val)} ({config.test_size:.0%} validation)")
     logger.info(
         f"Hyperparameters: n_estimators={config.n_estimators}, max_depth={config.max_depth}, "
         f"learning_rate={config.learning_rate}"
@@ -339,17 +355,22 @@ def train_advanced_model(
     # Train model based on type
     logger.info(f"Training {config.model_type.value} model...")
     if config.model_type == ModelType.XGBOOST:
-        model, accuracy, importance = train_xgboost_model(
+        model, accuracy, importance, val_probs = train_xgboost_model(
             x_train, y_train, x_val, y_val, config
         )
     elif config.model_type == ModelType.LIGHTGBM:
-        model, accuracy, importance = train_lightgbm_model(
+        model, accuracy, importance, val_probs = train_lightgbm_model(
             x_train, y_train, x_val, y_val, config
         )
     else:
         raise ValueError(f"Unsupported model type: {config.model_type}")
 
+    top_k = topk_accuracies(val_probs, y_val, ks=(1, 3, 5))
+    ndcg = ndcg_at_ks(val_probs, y_val, ks=(1, 3, 5))
+
     logger.info(f"Validation accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+    logger.info(f"Top-k accuracy: { {k: round(v, 3) for k, v in top_k.items()} }")
+    logger.info(f"NDCG: { {k: round(v, 3) for k, v in ndcg.items()} }")
 
     # Create artifacts
     artifacts = AdvancedTrainingArtifacts(
@@ -365,6 +386,8 @@ def train_advanced_model(
         train_samples=len(x_train),
         validation_samples=len(x_val),
         feature_importance={i: float(importance[i]) for i in range(len(importance))},
+        top_k=top_k,
+        ndcg=ndcg,
     )
 
     # Log feature importance summary

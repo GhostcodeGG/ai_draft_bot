@@ -35,6 +35,7 @@ class PickFeatures:
 
     features: np.ndarray
     label: str
+    event_id: str | None = None
 
 
 def encode_color(color: str) -> np.ndarray:
@@ -128,7 +129,9 @@ def build_pick_features(
             continue
 
         feature_vector = np.concatenate([card_to_vector(chosen_card), pack_mean])
-        feature_rows.append(PickFeatures(features=feature_vector, label=pick.chosen_card))
+        feature_rows.append(
+            PickFeatures(features=feature_vector, label=pick.chosen_card, event_id=pick.event_id)
+        )
 
     logger.info(f"Generated {len(feature_rows)} feature vectors (16 dimensions)")
     if skipped_no_pack > 0:
@@ -251,7 +254,13 @@ def build_advanced_pick_features(
                 ]
             )
 
-            feature_rows.append(PickFeatures(features=feature_vector, label=pick.chosen_card))
+            feature_rows.append(
+                PickFeatures(
+                    features=feature_vector,
+                    label=pick.chosen_card,
+                    event_id=pick.event_id,
+                )
+            )
 
             # Update picked cards for next iteration
             picked_so_far.append(pick.chosen_card)
@@ -440,11 +449,17 @@ def build_ultra_advanced_pick_features(
                     positional_vector,    # 13
                     opponent_vector,      # 16
                     archetype_vector,     # 4
-                    wr_interactions,      # 8
+            wr_interactions,      # 8
                 ]
             )
 
-            feature_rows.append(PickFeatures(features=feature_vector, label=pick.chosen_card))
+            feature_rows.append(
+                PickFeatures(
+                    features=feature_vector,
+                    label=pick.chosen_card,
+                    event_id=pick.event_id,
+                )
+            )
 
             # Update picked cards
             picked_so_far.append(pick.chosen_card)

@@ -14,13 +14,18 @@ Features:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from functools import lru_cache
-from typing import Any
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Mapping
 
 import scryfallsdk
 from scryfallsdk import Card
+
+from ai_draft_bot.utils.cache import hash_card_name
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,19 @@ _MIN_REQUEST_INTERVAL = 0.075  # 75ms between requests (conservative)
 _cache_hits = 0
 _cache_misses = 0
 _api_errors = 0
+
+_DISK_CACHE_DIR = Path("cache/scryfall")
+_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _disk_cache_path(card_name: str) -> Path:
+    """Get disk cache path for a card name."""
+    return _DISK_CACHE_DIR / f"{hash_card_name(card_name)}.json"
+
+
+def _card_from_payload(payload: Mapping[str, Any]) -> Card | SimpleNamespace:
+    """Return a lightweight card-like object from cached payload."""
+    return SimpleNamespace(**payload)
 
 
 def _rate_limit() -> None:
@@ -63,21 +81,59 @@ def _get_card_cached(card_name: str) -> Card | None:
     """
     global _cache_hits, _cache_misses, _api_errors
 
+    disk_path = _disk_cache_path(card_name)
+
+    # Disk cache first
+    if disk_path.exists():
+        try:
+            payload = disk_path.read_text(encoding="utf-8")
+            card_data = json.loads(payload)
+            _cache_hits += 1
+            return _card_from_payload(card_data)
+        except Exception:
+            disk_path.unlink(missing_ok=True)
+
     try:
-        _rate_limit()
-        card = scryfallsdk.cards.Named(fuzzy=card_name)
-        _cache_misses += 1
-        logger.debug(f"Fetched card from Scryfall: {card_name}")
-        return card
+        attempts = 3
+        for attempt in range(attempts):
+            try:
+                _rate_limit()
+                card = scryfallsdk.cards.Named(fuzzy=card_name)
+                _cache_misses += 1
+                logger.debug(f"Fetched card from Scryfall: {card_name}")
 
-    except scryfallsdk.ScryfallError as e:
-        _api_errors += 1
-        logger.warning(f"Scryfall API error for '{card_name}': {e}")
-        return None
+                # Persist minimal payload for reuse
+                payload = {
+                    "name": getattr(card, "name", card_name),
+                    "oracle_text": getattr(card, "oracle_text", None),
+                    "keywords": getattr(card, "keywords", []),
+                    "type_line": getattr(card, "type_line", ""),
+                    "mana_cost": getattr(card, "mana_cost", ""),
+                    "cmc": getattr(card, "cmc", 0),
+                    "colors": getattr(card, "colors", []),
+                    "rarity": getattr(card, "rarity", "common"),
+                    "power": getattr(card, "power", None),
+                    "toughness": getattr(card, "toughness", None),
+                }
+                try:
+                    disk_path.write_text(json.dumps(payload), encoding="utf-8")
+                except Exception:
+                    pass
 
-    except Exception as e:
-        _api_errors += 1
-        logger.error(f"Unexpected error fetching '{card_name}': {e}")
+                return _card_from_payload(payload)
+            except scryfallsdk.ScryfallError as e:
+                _api_errors += 1
+                if attempt == attempts - 1:
+                    logger.warning(f"Scryfall API error for '{card_name}': {e}")
+                    return None
+                time.sleep(0.1 * (attempt + 1))
+            except Exception as e:
+                _api_errors += 1
+                if attempt == attempts - 1:
+                    logger.error(f"Unexpected error fetching '{card_name}': {e}")
+                    return None
+                time.sleep(0.1 * (attempt + 1))
+    except Exception:
         return None
 
 
@@ -239,6 +295,7 @@ def get_cache_info() -> dict[str, Any]:
         >>> print(f"Cache hit rate: {info['hits'] / (info['hits'] + info['misses']):.2%}")
     """
     cache_info = _get_card_cached.cache_info()
+    disk_entries = list(_DISK_CACHE_DIR.glob("*.json"))
 
     return {
         "hits": cache_info.hits,
@@ -246,6 +303,7 @@ def get_cache_info() -> dict[str, Any]:
         "size": cache_info.currsize,
         "maxsize": cache_info.maxsize,
         "api_errors": _api_errors,
+        "disk_entries": len(disk_entries),
     }
 
 
@@ -260,6 +318,8 @@ def clear_cache() -> None:
     _cache_hits = 0
     _cache_misses = 0
     _api_errors = 0
+    for path in _DISK_CACHE_DIR.glob("*.json"):
+        path.unlink(missing_ok=True)
     logger.info("Scryfall cache cleared")
 
 
