@@ -151,6 +151,10 @@ def parse_card_metadata(path: Path | str) -> Mapping[str, CardMetadata]:
 def parse_draft_logs(path: Path | str, *, allow_partial: bool = True) -> List[PickRecord]:
     """Parse 17L draft JSONL logs into a list of :class:`PickRecord`.
 
+    Supports two formats:
+    1. Aggregated format: One line per complete draft with arrays of picks
+    2. Per-pick format: One line per individual pick (from convert_17l_csv_to_jsonl.py)
+
     Args:
         path: Path to the JSONL export from 17L.
         allow_partial: Whether to keep drafts that end early (e.g., disconnected users).
@@ -161,47 +165,79 @@ def parse_draft_logs(path: Path | str, *, allow_partial: bool = True) -> List[Pi
     logger.info(f"Parsing draft logs from {path}")
 
     picks: List[PickRecord] = []
-    draft_count = 0
+    entry_count = 0
     partial_draft_count = 0
     empty_pack_count = 0
 
     for entry in load_jsonl(path):
-        draft_count += 1
+        entry_count += 1
         event_id = str(entry.get("event_id", "unknown"))
-        packs = entry.get("pack_number")
-        pick_numbers = entry.get("pick_number")
-        cards_in_pack = entry.get("cards_in_pack")
-        picked_cards = entry.get("picked_cards")
 
-        if not isinstance(packs, Iterable) or not isinstance(pick_numbers, Iterable):
-            partial_draft_count += 1
-            if allow_partial:
-                continue
-            msg = "Draft log missing pack/pick arrays and allow_partial=False"
-            logger.error(msg)
-            raise ValueError(msg)
+        # Detect format: check if pack_number is a list (aggregated) or int (per-pick)
+        pack_number = entry.get("pack_number")
+        pick_number = entry.get("pick_number")
 
-        for pack, pick, pack_contents, chosen in zip(
-            packs or [], pick_numbers or [], cards_in_pack or [], picked_cards or []
-        ):
-            if not pack_contents:
+        # Format 1: Aggregated format (arrays)
+        if isinstance(pack_number, list) or isinstance(pick_number, list):
+            cards_in_pack = entry.get("cards_in_pack")
+            picked_cards = entry.get("picked_cards")
+
+            if not isinstance(pack_number, Iterable) or not isinstance(pick_number, Iterable):
+                partial_draft_count += 1
+                if allow_partial:
+                    continue
+                msg = "Draft log missing pack/pick arrays and allow_partial=False"
+                logger.error(msg)
+                raise ValueError(msg)
+
+            for pack, pick, pack_contents, chosen in zip(
+                pack_number or [], pick_number or [], cards_in_pack or [], picked_cards or []
+            ):
+                if not pack_contents:
+                    empty_pack_count += 1
+                    continue
+                picks.append(
+                    PickRecord(
+                        event_id=event_id,
+                        pack_number=int(pack),
+                        pick_number=int(pick),
+                        chosen_card=str(chosen),
+                        pack_contents=list(pack_contents),
+                    )
+                )
+
+        # Format 2: Per-pick format (single values)
+        else:
+            chosen_card = entry.get("chosen_card")
+            pack_contents = entry.get("pack_contents")
+
+            if pack_contents is None or not pack_contents:
                 empty_pack_count += 1
                 continue
+
+            if chosen_card is None or pack_number is None or pick_number is None:
+                partial_draft_count += 1
+                if allow_partial:
+                    continue
+                msg = "Pick record missing required fields and allow_partial=False"
+                logger.error(msg)
+                raise ValueError(msg)
+
             picks.append(
                 PickRecord(
                     event_id=event_id,
-                    pack_number=int(pack),
-                    pick_number=int(pick),
-                    chosen_card=str(chosen),
+                    pack_number=int(pack_number),
+                    pick_number=int(pick_number),
+                    chosen_card=str(chosen_card),
                     pack_contents=list(pack_contents),
                 )
             )
 
-    logger.info(f"Parsed {draft_count} draft events")
+    logger.info(f"Parsed {entry_count} entries")
     logger.info(f"Extracted {len(picks)} pick records")
     if partial_draft_count > 0:
         logger.warning(
-            f"Skipped {partial_draft_count} partial/incomplete drafts (allow_partial=True)"
+            f"Skipped {partial_draft_count} partial/incomplete entries (allow_partial={allow_partial})"
         )
     if empty_pack_count > 0:
         logger.warning(f"Skipped {empty_pack_count} picks with empty pack contents")
