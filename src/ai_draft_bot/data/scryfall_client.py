@@ -22,8 +22,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-import scryfallsdk
-from scryfallsdk import Card
+import scrython as scryfallsdk
+from scrython.cards import Named as Card
 
 from ai_draft_bot.utils.cache import hash_card_name
 
