@@ -18,7 +18,6 @@ from ai_draft_bot.data.scryfall_client import (
     get_full_card_info,
     get_keywords,
     get_oracle_text,
-    prefetch_set_cards,
 )
 
 
@@ -91,7 +90,7 @@ def example_cache_monitoring() -> None:
 
     # Show cache stats
     stats = get_cache_info()
-    print(f"\nCache statistics after first fetch:")
+    print("\nCache statistics after first fetch:")
     print(f"  Cache size: {stats['size']}/{stats['maxsize']}")
     print(f"  Cache hits: {stats['hits']}")
     print(f"  Cache misses: {stats['misses']}")
@@ -105,7 +104,7 @@ def example_cache_monitoring() -> None:
 
     # Show updated stats
     stats = get_cache_info()
-    print(f"\nCache statistics after second fetch:")
+    print("\nCache statistics after second fetch:")
     print(f"  Cache size: {stats['size']}/{stats['maxsize']}")
     print(f"  Cache hits: {stats['hits']} (increased!)")
     print(f"  Cache misses: {stats['misses']}")

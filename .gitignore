@@ -38,6 +38,9 @@ artifacts/
 *.joblib
 *.pkl
 
+# Cache directories
+cache/
+
 # Data files (large datasets)
 data/
 *.jsonl

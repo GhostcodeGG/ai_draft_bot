@@ -15,8 +15,19 @@ from typing import Set
 import numpy as np
 
 from ai_draft_bot.data.ingest_17l import CardMetadata
-from ai_draft_bot.data.scryfall_client import get_keywords, get_oracle_text
 from ai_draft_bot.utils.cache import cached_card_features
+
+# Make Scryfall optional to avoid breaking tests
+try:
+    from ai_draft_bot.data.scryfall_client import get_keywords, get_oracle_text
+    SCRYFALL_AVAILABLE = True
+except ImportError:
+    SCRYFALL_AVAILABLE = False
+    # Provide fallback functions
+    def get_keywords(card_name: str) -> Set[str]:
+        return set()
+    def get_oracle_text(card_name: str) -> str:
+        return ""
 
 # Common MTG keyword abilities
 KEYWORD_ABILITIES = {

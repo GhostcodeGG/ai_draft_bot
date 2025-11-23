@@ -117,8 +117,10 @@ def _get_card_cached(card_name: str) -> Card | None:
                 }
                 try:
                     disk_path.write_text(json.dumps(payload), encoding="utf-8")
-                except Exception:
-                    pass
+                except (OSError, IOError) as e:
+                    logger.debug(f"Failed to write disk cache for '{card_name}': {e}")
+                except Exception as e:
+                    logger.warning(f"Unexpected error writing disk cache for '{card_name}': {type(e).__name__}: {e}")
 
                 return _card_from_payload(payload)
             except scryfallsdk.ScryfallError as e:
@@ -133,7 +135,8 @@ def _get_card_cached(card_name: str) -> Card | None:
                     logger.error(f"Unexpected error fetching '{card_name}': {e}")
                     return None
                 time.sleep(0.1 * (attempt + 1))
-    except Exception:
+    except Exception as e:
+        logger.error(f"Fatal error in _get_card_cached for '{card_name}': {type(e).__name__}: {e}")
         return None
 
 

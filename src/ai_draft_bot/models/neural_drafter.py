@@ -294,7 +294,7 @@ def train_neural_model(
 
     # Initialize model
     model = DraftPickNetwork(
-        feature_dim=features.shape[1],
+        feature_dim=x_train.shape[1],
         num_classes=len(encoder.classes_),
         hidden_dims=config.hidden_dims,
         dropout_rate=config.dropout_rate,

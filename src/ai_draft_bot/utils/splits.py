@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence, Tuple
+from typing import List, Sequence
 
 import numpy as np
 
@@ -56,7 +56,6 @@ def train_val_split_by_event(
         split_idx = len(event_ids) - 1  # ensure we always have some validation events
 
     train_events = set(event_ids[:split_idx])
-    val_events = set(event_ids[split_idx:])
 
     train_rows: List[object] = []
     val_rows: List[object] = []
