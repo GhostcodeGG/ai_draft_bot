@@ -23,6 +23,7 @@ Endpoints:
 from __future__ import annotations
 
 import time
+import os
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -48,6 +49,7 @@ from ai_draft_bot.data.ingest_17l import CardMetadata, PickRecord, parse_card_me
 from ai_draft_bot.features.draft_context import build_ultra_advanced_pick_features
 from ai_draft_bot.models.advanced_drafter import AdvancedDraftModel
 from ai_draft_bot.utils import get_logger
+from ai_draft_bot.utils.cache import get_feature_cache
 
 logger = get_logger(__name__)
 
@@ -65,6 +67,26 @@ _lstm_encoder_path: Path | None = None
 # Cache statistics
 _cache_hits = 0
 _cache_misses = 0
+_metadata_version = 0
+
+
+def _configure_paths_from_env() -> None:
+    """Populate model/metadata/LSTM paths from environment if provided."""
+    global _model_path, _metadata_path, _lstm_model_path, _lstm_encoder_path
+
+    env_model = os.getenv("MODEL_PATH")
+    env_metadata = os.getenv("METADATA_PATH")
+    env_lstm_model = os.getenv("LSTM_MODEL_PATH")
+    env_lstm_encoder = os.getenv("LSTM_ENCODER_PATH")
+
+    if env_model:
+        _model_path = Path(env_model)
+    if env_metadata:
+        _metadata_path = Path(env_metadata)
+    if env_lstm_model:
+        _lstm_model_path = Path(env_lstm_model)
+    if env_lstm_encoder:
+        _lstm_encoder_path = Path(env_lstm_encoder)
 
 
 @asynccontextmanager
@@ -74,6 +96,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting AI Draft Bot API server...")
     config = get_config()
     config.ensure_directories()
+    _configure_paths_from_env()
 
     # Load model and metadata if paths are configured
     global _model_path, _metadata_path, _lstm_model_path, _lstm_encoder_path
@@ -118,7 +141,7 @@ app.add_middleware(
 
 def load_model(model_path: Path, metadata_path: Path) -> None:
     """Load model and metadata into memory."""
-    global _model, _metadata, _model_path, _metadata_path
+    global _model, _metadata, _model_path, _metadata_path, _metadata_version
 
     logger.info(f"Loading model from {model_path}...")
     _model = AdvancedDraftModel.load(model_path)
@@ -127,6 +150,9 @@ def load_model(model_path: Path, metadata_path: Path) -> None:
     logger.info(f"Loading metadata from {metadata_path}...")
     _metadata = dict(parse_card_metadata(metadata_path))
     _metadata_path = metadata_path
+
+    _metadata_version += 1
+    _cached_feature_rows.cache_clear()
 
     logger.info(f"✓ Loaded model with {len(_metadata)} cards")
 
@@ -190,6 +216,32 @@ def get_cached_card_metadata(card_name: str) -> CardMetadata | None:
     return None
 
 
+@lru_cache(maxsize=256)
+def _cached_feature_rows(
+    pack: tuple[str, ...],
+    deck: tuple[str, ...],
+    pack_number: int,
+    pick_number: int,
+    metadata_version: int,
+):
+    """Cache feature extraction for repeated identical requests."""
+    if _metadata is None:
+        return []
+
+    # deck is part of the cache key to reflect draft state even if not used directly.
+    pick_records = [
+        PickRecord(
+            event_id="api_request",
+            pack_number=pack_number,
+            pick_number=pick_number,
+            chosen_card=card,
+            pack_contents=list(pack),
+        )
+        for card in pack
+    ]
+    return build_ultra_advanced_pick_features(pick_records, _metadata, None)
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Health check endpoint with model status."""
@@ -220,6 +272,8 @@ async def health_check() -> HealthResponse:
         "hit_rate": _cache_hits / (_cache_hits + _cache_misses) if (_cache_hits + _cache_misses) > 0 else 0.0,
     }
 
+    feature_cache_stats = get_feature_cache().get_stats()
+
     return HealthResponse(
         status="healthy",
         model_loaded=True,
@@ -228,6 +282,9 @@ async def health_check() -> HealthResponse:
         feature_dimension=None,
         num_classes=num_classes,
         cache_stats=cache_stats,
+        lstm_model_loaded=_lstm_model is not None,
+        lstm_model_version="0.1.0-lstm" if _lstm_model is not None else None,
+        feature_cache_stats=feature_cache_stats,
         uptime_seconds=uptime,
     )
 
@@ -255,20 +312,14 @@ async def predict(request: PredictRequest) -> PredictResponse:
                 detail=f"Unknown cards in pack: {', '.join(missing_cards[:5])}",
             )
 
-        # Build pick records for feature extraction
-        pick_records = [
-            PickRecord(
-                event_id="api_request",
-                pack_number=request.pack_number,
-                pick_number=request.pick_number,
-                chosen_card=card,
-                pack_contents=request.pack,
-            )
-            for card in request.pack
-        ]
-
-        # Extract features
-        features = build_ultra_advanced_pick_features(pick_records, _metadata, None)
+        # Extract features (cached for repeated identical requests)
+        features = _cached_feature_rows(
+            tuple(request.pack),
+            tuple(request.deck or []),
+            request.pack_number,
+            request.pick_number,
+            _metadata_version,
+        )
 
         if not features:
             raise HTTPException(
@@ -503,6 +554,20 @@ async def load_model_endpoint(model_path: str, metadata_path: str) -> dict[str, 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load model: {str(e)}",
+        )
+
+
+@app.post("/load/lstm")
+async def load_lstm_model_endpoint(model_path: str, encoder_path: str) -> dict[str, Any]:
+    """Load or reload the LSTM sequence model and encoder."""
+    try:
+        load_lstm_model(Path(model_path), Path(encoder_path))
+        return {"status": "success", "message": "LSTM model loaded successfully"}
+    except Exception as e:
+        logger.error(f"Failed to load LSTM model: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load LSTM model: {str(e)}",
         )
 
 

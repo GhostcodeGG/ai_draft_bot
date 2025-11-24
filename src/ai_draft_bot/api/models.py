@@ -93,6 +93,9 @@ class HealthResponse(BaseModel):
     feature_dimension: int | None
     num_classes: int | None
     cache_stats: dict[str, Any] | None = None
+    feature_cache_stats: dict[str, Any] | None = None
+    lstm_model_loaded: bool | None = None
+    lstm_model_version: str | None = None
     uptime_seconds: float
 
 

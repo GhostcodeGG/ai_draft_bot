@@ -149,6 +149,10 @@ class AdvancedDraftModel:
         labels = self.artifacts.label_encoder.inverse_transform(np.arange(len(proba)))
         return {str(label): float(prob) for label, prob in zip(labels, proba)}
 
+    def get_label_encoder(self) -> LabelEncoder:
+        """Expose the label encoder for downstream components (API/metrics)."""
+        return self.artifacts.label_encoder
+
     def get_feature_importance(self) -> np.ndarray | None:
         """Get feature importance scores if available."""
         return self.artifacts.feature_importance
